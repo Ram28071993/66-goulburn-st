@@ -1,0 +1,26 @@
+# Client evidence and workbooks stay in OneDrive - never push to GitHub
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.pdf
+*.docx
+*.doc
+*.pptx
+*.msg
+*.eml
+*.jpg
+*.jpeg
+*.png
+*.zip
+evidence/
+data/
+# Office temp / OS noise
+~$*
+*.tmp
+Thumbs.db
+Desktop.ini
+# Python / local Claude settings
+__pycache__/
+*.pkl
+.claude/settings.local.json
