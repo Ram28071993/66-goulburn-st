@@ -64,6 +64,8 @@ the real evidence directory every run, and there's only one file for it to write
 
 ## Key decisions already made (don't re-ask)
 
+- **Certified period lock** (Ram, 09/11/2026): rating **N71667** (Base Building, 4.5 stars, 53% verified) is certified for **17/10/2025 to 16/10/2026**. Once certified, the data for that period can't change, so no rows are added or removed. The masterfile has to match what was certified in case of audit. New or late evidence dated inside a certified period (CoDs, Mavie's scale exports, Bin Tracker corrections) is logged and identified somewhere isolated, never written into tenant tabs, D1, BT_BaseBuilding Gap, NABERS or D2. Anything after 16/10/2026 goes to the next rating period. Example: the 09/11/2026 reconciliation against Mavie's export found Abbro 14/08 25.1kg and Barker Evans 31/08 88.4kg missing from D1, plus 0kg vs real-weight and BDW vs Propex (L24) attribution differences. All left as certified.
+
 - **NCAT** is not a separate tenant — Iron Mountain invoices the Property NSW tenancy as "NSW CIVIL & ADMINISTRATIVE TRIBUNAL"/"NCAT". All such docs route to the **Property NSW** tab.
 - **Verified (Yes/No):** Yes for any complete CoD-backed row. No for manually back-reported schedule estimates with no CoD, and for Bin Tracker onsite-weight rows (those get their own Base Building matching treatment in BT_BaseBuilding Gap, not a CoD).
 - **Wesfarmers**' Shred-X certificates are issued under "API Services Australia Pty Ltd" — confirmed with Ram 17/09/2026 as Wesfarmers' trading name at 66 Goulburn St, Level 10. In `KNOWN_ALIASES`.
