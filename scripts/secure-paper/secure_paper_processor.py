@@ -18,6 +18,10 @@ it is NOT guessed at — it's flagged in the Evidence Tracker for manual
 review, and printed to the console so it can be handled (either read
 manually, or a new parser added below).
 
+Certified period lock (09/11/2026): evidence dated inside a certified
+NABERS rating period (CERTIFIED_PERIODS) is never written to the masterfile;
+it is logged in the separate Post-Certification Register instead.
+
 Usage:
     python secure_paper_processor.py --tenant "Property NSW"
     python secure_paper_processor.py --tenant "Property NSW" --dry-run
@@ -31,7 +35,7 @@ import re
 import shutil
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, date
 
 import openpyxl
 import pdfplumber
@@ -58,6 +62,104 @@ UPDATED_DIR = os.path.join(MASTER_DIR, "Updated")
 # hand-versioned files. All of that is now merged into ONE file in Updated/;
 # every superseded file was moved to Back Ups/, nothing deleted.
 MASTER_FILE = os.path.join(UPDATED_DIR, "Secure_Paper_Bin_Tally_PerTenant.xlsx")
+
+# ---------------------------------------------------------------------------
+# Certified period lock (added 09/11/2026, Ram)
+# ---------------------------------------------------------------------------
+# Once a NABERS rating is certified, the data for its rating period is frozen:
+# nothing is added to or removed from the masterfile for that period, so the
+# masterfile always matches what was certified (audit defensibility). Any new
+# or late evidence dated inside a certified period is NOT written to the
+# masterfile (no tenant-tab row, no Evidence Tracker row, no statement-note
+# annotation). It goes to the isolated Post-Certification Register instead,
+# which is a separate workbook outside the masterfile.
+# Add a tuple here each time a new rating is certified.
+CERTIFIED_PERIODS = [
+    # (rating number, period from, period to) - inclusive
+    ("N71667", date(2025, 10, 17), date(2026, 10, 16)),
+]
+
+REGISTER_DIR = os.path.join(BASE_DIR, "4. Post-Certification Register")
+REGISTER_FILE = os.path.join(REGISTER_DIR, "Post_Certification_Register.xlsx")
+REGISTER_SHEET = "Register"
+REGISTER_HEADERS = [
+    "Logged on",            # A
+    "Source",               # B  e.g. "CoD (secure_paper_processor.py)", "Mavie scale export"
+    "Source file",          # C
+    "Tenant / tab",         # D
+    "Level",                # E
+    "Collection date",      # F
+    "Docket / Reference",   # G  dedup key together with D
+    "Units",                # H
+    "Weight (kg)",          # I
+    "Certified rating",     # J
+    "What differs vs certified dataset",  # K
+    "Status",               # L  default "Not incorporated - certified period locked"
+]
+REGISTER_DEFAULT_STATUS = "Not incorporated - certified period locked"
+
+
+def certified_period_for(d):
+    """Return the rating number whose certified period contains date d
+    (datetime or date), else None."""
+    if d is None:
+        return None
+    if isinstance(d, datetime):
+        d = d.date()
+    for rating, d_from, d_to in CERTIFIED_PERIODS:
+        if d_from <= d <= d_to:
+            return rating
+    return None
+
+
+def certified_period_overlapping(d_from, d_to):
+    """Rating number of the first certified period overlapping [d_from, d_to]."""
+    if isinstance(d_from, datetime):
+        d_from = d_from.date()
+    if isinstance(d_to, datetime):
+        d_to = d_to.date()
+    for rating, p_from, p_to in CERTIFIED_PERIODS:
+        if d_from <= p_to and d_to >= p_from:
+            return rating
+    return None
+
+
+def load_register():
+    """Open (or create in memory) the Post-Certification Register workbook.
+    Never touches the masterfile."""
+    if os.path.exists(REGISTER_FILE):
+        rwb = openpyxl.load_workbook(REGISTER_FILE)
+    else:
+        rwb = openpyxl.Workbook()
+        rwb.active.title = REGISTER_SHEET
+    ws = rwb[REGISTER_SHEET] if REGISTER_SHEET in rwb.sheetnames else rwb.create_sheet(REGISTER_SHEET)
+    if ws.cell(row=1, column=1).value is None:
+        for c, h in enumerate(REGISTER_HEADERS, start=1):
+            ws.cell(row=1, column=c, value=h)
+    return rwb
+
+
+def register_keys(rwb):
+    ws = rwb[REGISTER_SHEET]
+    keys = set()
+    for r in range(2, ws.max_row + 1):
+        tab = ws.cell(row=r, column=4).value
+        ref = ws.cell(row=r, column=7).value
+        if ref not in (None, ""):
+            keys.add((str(tab), str(ref)))
+    return keys
+
+
+def append_register_row(rwb, source, source_file, tab, level, date_dt, ref, units, weight_kg, rating, differs,
+                        status=REGISTER_DEFAULT_STATUS):
+    ws = rwb[REGISTER_SHEET]
+    r = ws.max_row + 1
+    while r > 2 and all(ws.cell(row=r - 1, column=c).value in (None, "") for c in range(1, 4)):
+        r -= 1
+    vals = [datetime.now().strftime("%d/%m/%Y"), source, source_file, tab, level,
+            date_dt.strftime("%d/%m/%Y") if date_dt else None, ref, units, weight_kg, rating, differs, status]
+    for c, v in enumerate(vals, start=1):
+        ws.cell(row=r, column=c, value=v)
 
 SITE_ADDRESS = "66 Goulburn Street, Sydney, NSW"
 SITE_PREMISES_ID = 2235
@@ -950,7 +1052,7 @@ def rebuild_nabers(wb, consolidated_rows, log_lines):
 # Main per-tenant processing
 # ---------------------------------------------------------------------------
 
-def process_tenant(folder_name, wb, log_lines):
+def process_tenant(folder_name, wb, log_lines, rwb=None, reg_keys=None):
     tab_name = TENANT_FOLDER_TO_TAB.get(folder_name)
     if tab_name is None and folder_name in wb.sheetnames:
         # 2026-09-17 audit fix: a folder with no explicit mapping but an
@@ -970,12 +1072,12 @@ def process_tenant(folder_name, wb, log_lines):
             f"Skipping — needs a decision before this can be processed."
         )
         print(f"[STOP] '{folder_name}' has no tab mapping. Skipping.")
-        return {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0}
+        return {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0, "locked": 0}
 
     if tab_name not in wb.sheetnames:
         log_lines.append(f"STOP: target tab '{tab_name}' does not exist in the workbook. Skipping '{folder_name}'.")
         print(f"[STOP] Tab '{tab_name}' missing. Skipping '{folder_name}'.")
-        return {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0}
+        return {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0, "locked": 0}
 
     folder_path = os.path.join(EVIDENCE_DIR, folder_name)
     evidence_files = sorted(glob.glob(os.path.join(folder_path, "*.pdf"))) + sorted(
@@ -988,8 +1090,26 @@ def process_tenant(folder_name, wb, log_lines):
     pre_existing_dockets = existing_dockets(wb, tab_name)
     processed_this_run = set()
 
-    counts = {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0}
+    counts = {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0, "locked": 0}
     all_records = []
+    if reg_keys is None:
+        reg_keys = set()
+
+    def lock_to_register(rating, ref, source_file, level, date_dt, units, differs):
+        """Certified-period evidence: log it in the isolated register, never the masterfile."""
+        key = (tab_name, str(ref))
+        if key in reg_keys:
+            log_lines.append(f"  CERTIFIED PERIOD LOCKED, already in register (no write): {source_file} - {ref}")
+        else:
+            if rwb is not None:
+                append_register_row(rwb, "CoD (secure_paper_processor.py)", source_file, tab_name, level,
+                                    date_dt, ref, units, None, rating, differs)
+            reg_keys.add(key)
+            log_lines.append(
+                f"  CERTIFIED PERIOD LOCKED -> Post-Certification Register (masterfile NOT touched): "
+                f"{source_file} - {ref} ({date_dt.strftime('%d/%m/%Y') if date_dt else 'no date'}, rating {rating})"
+            )
+        counts["locked"] += 1
 
     for evidence_path in evidence_files:
         filename = os.path.basename(evidence_path)
@@ -1012,6 +1132,14 @@ def process_tenant(folder_name, wb, log_lines):
             blanket = detect_blanket_statement(raw_text) if raw_text else None
             if blanket:
                 date_from, date_to, contractor = blanket
+                locked_rating = certified_period_overlapping(date_from, date_to)
+                if locked_rating:
+                    lock_to_register(
+                        locked_rating, pseudo_key, filename, None, None, None,
+                        f"Blanket tenant statement {date_from.strftime('%d/%m/%Y')}-{date_to.strftime('%d/%m/%Y')} "
+                        f"overlaps certified period; would have annotated existing rows. Not applied.",
+                    )
+                    continue
                 append_evidence_tracker_row(
                     wb, tab_name, None, contractor, pseudo_key, None, None,
                     complies="No", mapped="No",
@@ -1076,6 +1204,16 @@ def process_tenant(folder_name, wb, log_lines):
             # the same evidence, not a duplicate. No new row anywhere.
             log_lines.append(f"  ALREADY LOGGED (skipped, no write): {rec['source_file']} — docket {docket}")
             counts["already_logged"] += 1
+            continue
+
+        locked_rating = certified_period_for(date_dt)
+        if locked_rating:
+            total_qty_l = sum(q for q, _ in bins) if bins else None
+            differs = "New CoD dated inside certified period; not in certified dataset."
+            if issues:
+                differs += " Parser issues: " + "; ".join(issues)
+            lock_to_register(locked_rating, docket, rec["source_file"], level, date_dt, total_qty_l, differs)
+            processed_this_run.add(docket)
             continue
 
         if docket in processed_this_run:
@@ -1147,6 +1285,7 @@ def write_run_log(log_lines, totals, dry_run, backup_path):
             f"- Already logged from a previous run (skipped, no write): {totals['already_logged']}\n"
             f"- Duplicate evidence within this run (flagged): {totals['duplicate_evidence']}\n"
             f"- Flagged for review: {totals['flagged']}\n"
+            f"- Certified period locked -> Post-Certification Register (masterfile not touched): {totals.get('locked', 0)}\n"
         )
     return log_path
 
@@ -1200,10 +1339,13 @@ def main():
     folders = [f for f in dict.fromkeys(folders) if os.path.isdir(os.path.join(EVIDENCE_DIR, f))]
 
     log_lines = []
-    totals = {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0}
+    totals = {"processed": 0, "added": 0, "already_logged": 0, "duplicate_evidence": 0, "flagged": 0, "locked": 0}
+    rwb = load_register()
+    reg_keys = register_keys(rwb)
+    reg_rows_before = rwb[REGISTER_SHEET].max_row
     for folder in folders:
         log_lines.append(f"\n### Folder: {folder}")
-        counts = process_tenant(folder, wb, log_lines)
+        counts = process_tenant(folder, wb, log_lines, rwb=rwb, reg_keys=reg_keys)
         for k in totals:
             totals[k] += counts[k]
 
@@ -1221,6 +1363,14 @@ def main():
         print(f"Saved: {MASTER_FILE}")
     else:
         print("Dry run — workbook not saved.")
+
+    if rwb[REGISTER_SHEET].max_row > reg_rows_before:
+        if not args.dry_run:
+            os.makedirs(REGISTER_DIR, exist_ok=True)
+            rwb.save(REGISTER_FILE)
+            print(f"Post-Certification Register updated: {REGISTER_FILE}")
+        else:
+            print("Dry run — Post-Certification Register not saved.")
 
     log_path = write_run_log(log_lines, totals, args.dry_run, backup_path)
     print(f"Run log: {log_path}")
