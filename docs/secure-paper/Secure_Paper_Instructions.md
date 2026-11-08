@@ -68,6 +68,13 @@ the real evidence directory every run, and there's only one file for it to write
 - **Verified (Yes/No):** Yes for any complete CoD-backed row. No for manually back-reported schedule estimates with no CoD, and for Bin Tracker onsite-weight rows (those get their own Base Building matching treatment in BT_BaseBuilding Gap, not a CoD).
 - **Wesfarmers**' Shred-X certificates are issued under "API Services Australia Pty Ltd" — confirmed with Ram 17/09/2026 as Wesfarmers' trading name at 66 Goulburn St, Level 10. In `KNOWN_ALIASES`.
 - **Barker Evans**' contractor is Complete Shredding Services (Nicole Birrell) — different certificate format from everything else, own parser added 17/09/2026.
+- **Nordwake**: evidence folder `Nordwake` maps to tab `Nordwake Pty Ltd` (confirmed with Ram 20/10/2026). Shred-X certs read "Nordwake Pty Limited", Level 13, in `KNOWN_ALIASES`. Same date also fixed a Shred-X parser layout gap (line break before "on <date>" instead of after). First load: 9 fortnightly collections 02/04/2026 to 24/07/2026, 1×240L each.
+- **Bin Tracker source** (Dock 1): `EC - 4.0 NABERS\4.4 Power BI\WasteScanner\Raw Datasets\WS_66_Goulburn_Street.xlsx`, tab `R_Cleaners_Weight`, Waste Type = Secure paper. VIEW ONLY, never edit that tab. D1 refreshed from it 20/10/2026 (to 30/09/2026); Mavie's corrections there are treated as the source of truth.
+- **Zero-kg weighs** (Ram, 21/10/2026): 0kg tenant entries are excluded. If the Base Building weigh right after has a real weight, it stays in Dock 1 as an unattributed Base Building bin.
+- **Missed Base Building weigh** (Ram, 21/10/2026): if a tenant bin was weighed but its Base Building weigh was clearly missed, the tenant weight is used as the BB weight (same as Abbro 14/08).
+- **Cutover rule applies to every tenant**: Barker Evans 31/08 (Row ID 132) set to Secondary/Exclude 21/10/2026, onsite start 22/08.
+- **Propex** tab added 21/10/2026 for Propex Derivatives Pty Ltd, Level 24, onsite from 04/09/2026.
+- **William Roberts** in `TENANT_FOLDER_TO_TAB` from 21/10/2026; Iron Mountain single parser now accepts single-digit days (e.g. 3/09/2026).
 - Invoices/collection reports (non-CoD): logged as existence-only in Evidence Tracker (non-compliant), never extracted, never added to a tenant tab.
 - Unknown tenant folder name → script stops and flags rather than guessing or auto-creating a tab.
 - Calculated weight formula (internal reference only, never the real NABERS weight): `=19.2*0.9*<units collected>` — the NABERS default density for a 240L secure paper bin.

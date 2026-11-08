@@ -86,6 +86,10 @@ TENANT_FOLDER_TO_TAB = {
     # since inception. See Pending Queries row 6 / secure-paper-auditor.md.
     "Wesfarmers": "Wesfarmers",
     "Barker Evans": "Barker Evans",
+    # Added 20/10/2026, confirmed by Ram: folder "Nordwake" = tab "Nordwake Pty Ltd".
+    "Nordwake": "Nordwake Pty Ltd",
+    # Added 21/10/2026 (was auto-mapping by exact tab name).
+    "William Roberts": "William Roberts",
 }
 
 # Company names that may legitimately appear ON a document for a given tab,
@@ -100,6 +104,8 @@ KNOWN_ALIASES = {
     # Confirmed with Ram 17/09/2026: Wesfarmers' Shred-X certs are issued
     # under this trading name, address on the cert is 66 Goulburn St, Level 10.
     "Wesfarmers": {"API SERVICES AUSTRALIA PTY LTD"},
+    # Confirmed with Ram 20/10/2026: Shred-X certs read "Nordwake Pty Limited", Level 13.
+    "Nordwake Pty Ltd": {"NORDWAKE PTY LIMITED"},
 }
 
 # Tenants whose evidence source has no floor/level info at all. Level comes
@@ -229,7 +235,8 @@ def parse_iron_mountain_single(text, filename):
     one Company Name, one Address, one Description of Service line."""
     m_head = re.search(
         r"A/C\s*#\s*Service Docket\s*#\s*Service Date\s*\n?\s*"
-        r"(\S+)\s+(\S+)\s+(\d{2}/\d{2}/\d{2,4})",
+        # Relaxed 21/10/2026: William Roberts cert 3932941 has a single-digit day (3/09/2026).
+        r"(\S+)\s+(\S+)\s+(\d{1,2}/\d{1,2}/\d{2,4})",
         text,
     )
     m_company = re.search(r"Company Name\s*\n(.+)", text)
@@ -457,7 +464,8 @@ def parse_shredx(text, filename):
         r"Account:\s*(\S+)\s*\n"
         r"Amount Description\s*\n"
         r"(\d+)\s+(\d+)L[^\n]*\n"
-        r"Collected From\s+(.+?)\s+on\s*\n\s*(\d{1,2}/\d{1,2}/\d{4})",
+        # Relaxed 20/10/2026: Nordwake's cert breaks the line BEFORE "on", Wesfarmers' AFTER it.
+        r"Collected From\s+(.+?)\s+on\s+(\d{1,2}/\d{1,2}/\d{4})",
         text,
     )
     if not blocks:
